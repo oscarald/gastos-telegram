@@ -1,0 +1,84 @@
+name: control-gastos
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: gastos_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gastos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gastos}
+      POSTGRES_DB: ${POSTGRES_DB:-gastos}
+      TZ: UTC
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gastos} -d ${POSTGRES_DB:-gastos}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - gastos
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gastos_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-gastos}:${POSTGRES_PASSWORD:-gastos}@db:5432/${POSTGRES_DB:-gastos}
+      APP_TIMEZONE: ${APP_TIMEZONE:-America/La_Paz}
+      DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-BOB}
+      N8N_API_KEY: ${N8N_API_KEY:-change-me-n8n-api-key}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=4).status == 200 else 1)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - gastos
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: gastos_frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - gastos
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  gastos:
+    driver: bridge

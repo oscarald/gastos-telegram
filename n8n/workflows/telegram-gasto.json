@@ -1,0 +1,242 @@
+{
+  "name": "Telegram - Registrar gasto",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -360,
+        0
+      ],
+      "webhookId": "gastos-telegram-trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Codigo del nodo \"Interpretar mensaje\" del flujo n8n.\n// Extrae monto, descripcion, fecha y metodo de pago de un mensaje de Telegram.\n//\n// Zona horaria de referencia: America/La_Paz (UTC-04:00, sin horario de verano).\n\nconst OFFSET_MINUTOS = -240;\n\nconst pad = (valor) => String(valor).padStart(2, '0');\n\nfunction ahoraEnLaPaz() {\n  return new Date(Date.now() + OFFSET_MINUTOS * 60000);\n}\n\nfunction isoEnLaPaz(fecha) {\n  return (\n    `${fecha.getUTCFullYear()}-${pad(fecha.getUTCMonth() + 1)}-${pad(fecha.getUTCDate())}` +\n    `T${pad(fecha.getUTCHours())}:${pad(fecha.getUTCMinutes())}:${pad(fecha.getUTCSeconds())}-04:00`\n  );\n}\n\nfunction fechaDesdeTexto(texto, ahora) {\n  const hoy = isoEnLaPaz(ahora);\n\n  if (/\\bante\\s*ayer\\b|\\banteayer\\b/i.test(texto)) {\n    const ayer = new Date(ahora.getTime() - 48 * 3600000);\n    return isoEnLaPaz(ayer);\n  }\n\n  if (/\\bayer\\b/i.test(texto)) {\n    const ayer = new Date(ahora.getTime() - 24 * 3600000);\n    return isoEnLaPaz(ayer);\n  }\n\n  if (/\\bhoy\\b/i.test(texto)) {\n    return hoy;\n  }\n\n  const explicita = texto.match(/\\b(\\d{1,2})[\\/-](\\d{1,2})(?:[\\/-](\\d{2,4}))?\\b/);\n  if (explicita) {\n    let anio = explicita[3] ? Number(explicita[3]) : ahora.getUTCFullYear();\n    if (anio < 100) {\n      anio += 2000;\n    }\n    const mes = Number(explicita[2]);\n    const dia = Number(explicita[1]);\n    if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {\n      return `${anio}-${pad(mes)}-${pad(dia)}T12:00:00-04:00`;\n    }\n  }\n\n  return null;\n}\n\nfunction metodoDePagoDesdeTexto(texto) {\n  if (/tarjeta\\s+de\\s+(debito|débitos|debítos)/i.test(texto)) return 'Tarjeta de débito';\n  if (/tarjeta\\s+de\\s+(credito|crédito|créditos)/i.test(texto)) return 'Tarjeta de crédito';\n  if (/\\bdebit\\b|\\bdebit[oó]s?\\b/i.test(texto)) return 'Tarjeta de débito';\n  if (/\\bcredit\\b|\\bcredit[oó]s?\\b/i.test(texto)) return 'Tarjeta de crédito';\n  if (/\\befectivo\\b|\\bplata\\b/i.test(texto)) return 'Efectivo';\n  if (/\\bqr\\b/i.test(texto)) return 'QR';\n  if (/\\btransferencia\\b|\\btransferi\\b|\\btransf\\b/i.test(texto)) return 'Transferencia';\n  return null;\n}\n\nconst mensaje = $json.message ?? {};\nconst texto = String(mensaje.text ?? mensaje.caption ?? '').trim();\nconst chatId = mensaje.chat?.id ?? null;\nconst messageId = mensaje.message_id ?? null;\n\nif (!texto) {\n  return [{ ok: false, chatId, messageId, error: 'El mensaje esta vacio.' }];\n}\n\nconst patronMonto =\n  /(?:bs\\.?|bolivianos?|\\$)?\\s*(\\d{1,3}(?:[.,]\\d{3})*(?:[.,]\\d{1,2})?|\\d+(?:[.,]\\d{1,2})?)/i;\nconst coincidencia = texto.match(patronMonto);\n\nif (!coincidencia) {\n  return [\n    {\n      ok: false,\n      chatId,\n      messageId,\n      error: 'No encontre el monto. Ejemplo: \"almuerzo 50 bs\".',\n    },\n  ];\n}\n\nconst previo = texto.slice(0, coincidencia.index).trimEnd();\nif (previo.endsWith('-')) {\n  return [\n    {\n      ok: false,\n      chatId,\n      messageId,\n      error: 'El monto debe ser un numero mayor que cero.',\n    },\n  ];\n}\n\nlet montoTexto = coincidencia[1];\nif (montoTexto.includes(',')) {\n  montoTexto = montoTexto.replace(/\\./g, '').replace(',', '.');\n} else {\n  montoTexto = montoTexto.replace(/,/g, '.');\n}\n\nconst monto = Number(montoTexto);\nif (!Number.isFinite(monto) || monto <= 0) {\n  return [\n    {\n      ok: false,\n      chatId,\n      messageId,\n      error: 'El monto debe ser un numero mayor que cero.',\n    },\n  ];\n}\n\nlet descripcion = texto.replace(coincidencia[0], ' ');\ndescripcion = descripcion.replace(/\\b(bs\\.?|bolivianos?)\\b/gi, ' ');\ndescripcion = descripcion.replace(/\\s+/g, ' ').trim();\nif (!descripcion) {\n  descripcion = 'Gasto sin descripcion';\n}\n\nconst ahora = ahoraEnLaPaz();\n\nreturn [\n  {\n    ok: true,\n    chatId,\n    messageId,\n    monto,\n    descripcion,\n    fecha: fechaDesdeTexto(texto, ahora),\n    metodo_pago: metodoDePagoDesdeTexto(texto),\n  },\n];\n"
+      },
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "Interpretar mensaje",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-ok",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000003",
+      "name": "Es gasto valido",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/v1/gastos/telegram",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "change-me-n8n-api-key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ monto: $json.monto, descripcion: $json.descripcion, fecha: $json.fecha, metodo_pago: $json.metodo_pago, identificador_externo: 'telegram_' + $json.chatId + '_' + $json.messageId }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "Registrar gasto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        380,
+        -120
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Codigo del nodo \"Preparar confirmacion\" del flujo n8n.\n// Traduce la respuesta de la API a un mensaje para Telegram.\n\nconst respuesta = $json;\nconst original = $('Interpretar mensaje').item.json;\nconst chatId = original.chatId;\n\nconst cuerpo = respuesta.body ?? respuesta;\nconst errorApi = respuesta.error ?? cuerpo.error;\n\nif (errorApi || (respuesta.statusCode && respuesta.statusCode >= 400)) {\n  const detalle =\n    errorApi?.message ??\n    cuerpo?.message ??\n    `La API respondio con el estado ${respuesta.statusCode ?? 'desconocido'}`;\n  return [{ chatId, texto: `⚠️ No pude registrar el gasto: ${detalle}` }];\n}\n\nconst data = cuerpo.data ?? {};\nconst duplicado = Boolean(cuerpo.duplicate);\nconst monto = Number(data.monto ?? 0).toFixed(2);\nconst descripcion = data.descripcion ?? '';\nconst categoria = data.categoria ?? 'Sin categoria';\n\nconst texto = duplicado\n  ? `ℹ️ Este gasto ya estaba registrado: ${monto} Bs - ${descripcion} (${categoria})`\n  : `✅ Gasto registrado: ${monto} Bs - ${descripcion} (${categoria})`;\n\nreturn [{ chatId, texto }];\n"
+      },
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "Preparar confirmacion",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000006",
+      "name": "Responder",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        900,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Codigo del nodo \"Preparar error\" del flujo n8n.\n// Mensaje de respuesta cuando el mensaje de Telegram no se puede interpretar.\n\nconst original = $('Interpretar mensaje').item.json;\n\nreturn [\n  {\n    chatId: original.chatId,\n    texto: `⚠️ ${original.error ?? 'No pude interpretar el mensaje.'}`,\n  },\n];\n"
+      },
+      "id": "a1000000-0000-4000-8000-000000000007",
+      "name": "Preparar error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        380,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000008",
+      "name": "Responder error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        640,
+        140
+      ]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Interpretar mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar mensaje": {
+      "main": [
+        [
+          {
+            "node": "Es gasto valido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Es gasto valido": {
+      "main": [
+        [
+          {
+            "node": "Registrar gasto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar gasto": {
+      "main": [
+        [
+          {
+            "node": "Preparar confirmacion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar confirmacion": {
+      "main": [
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar error": {
+      "main": [
+        [
+          {
+            "node": "Responder error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "versionId": "7f3c1d2a-0b6e-4c91-9d0e-2b7a5c8f4e10",
+  "meta": {
+    "instanceId": "control-gastos"
+  },
+  "tags": []
+}
